@@ -1,0 +1,162 @@
+---
+title: "Machine Learning Course Project"
+author: "Julien Beaulieu"
+date: "October 19, 2015"
+output: html_document
+---
+
+## Summary
+
+The following analyses analyses data recorded during personal activity. Subjects were asked to lift barbells in correct and incorrect ways, under 6 classes. More than 50 measurements were taken while the subject was performing the activity. More information about the dataset can be found [here](http://groupware.les.inf.puc-rio.br/har).
+
+The general goal of this exercice is to build a computer model that could accuratly predict an activity's class based on the accelerometer data. I tested two model types: *Classification tree (using the rpart function)* and *Random forest (using randomForest)*. Although the rpart model was found to be faster at learning and making predictions, the RandomForest model had better accuracy.
+
+## Loading and preprocessing the data
+
+The following packages will be necessary for carrying out the analysis. A random seed is also set for reproducibility.
+```{r}
+library(caret)
+library(rpart)
+library(randomForest)
+
+set.seed(12345)
+```
+
+The data can be downloaded directly in R using the following code:
+```{r}
+if(!file.exists("pml-training.csv")){
+  download.file("http://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv", 
+                destfile = "pml-training.csv")
+}
+if(!file.exists("pml-testing.csv")){
+  download.file("http://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv", 
+                destfile = "pml-testing.csv")
+}
+
+train <- read.csv('pml-training.csv', na.strings = c("","NA", "#DIV/0!"))
+test <- read.csv('pml-testing.csv', na.strings = c("","NA", "#DIV/0!"))
+```
+
+### Removing variables containing missing values
+
+A first look at the data structure shows that a significant number of variables contains missing data (NA):
+```{r}
+str(train)
+```
+
+Theses missing values need to be removed so that the models can be applied. The following identify which variables are incomplete by summing the number of NAs in the train data. These variables are then removed from the two datasets:
+
+```{r}
+hasNA <- sapply(train, function(variable) {(NA %in% variable)})
+train <- train[,!hasNA]
+test <- test[,!hasNA]
+
+```
+
+### Removing row identifier and other non-predictive variables
+
+A look at the variable names shows that a number of them are not accelerometer data but identifiers and administrative information for each activity run:
+
+```{r}
+names(train)
+```
+
+The first 7 variables need to be removed in order to have a proper working model:
+
+```{r}
+train <- train[,-(1:7)]
+test <- test[,-(1:7)]
+```
+
+### Creating data partition for training and cross validation
+
+Althought the data was already divided into two datasets (train and test), the later do not contain information on the classe of the activity and therefore cannot be used for model validation. Hence, the train dataset needs to be partitioned into a training and validation datasets:
+
+```{r}
+inTrain <- createDataPartition(y=train$classe,p=0.75,list=FALSE)
+training <- train[inTrain,]
+validation <- train[-inTrain,]
+```
+
+##Training models
+
+In this exercice, two model types are compared: *Classification model (rpart)* and *Random forest (rf)*. The following code applies the two method to the training data and records the training time.
+
+```{r}
+### Rpart
+time.rpart.train <- system.time(
+  fit.rpart <- rpart(classe ~., data = training)
+)
+
+print(fit.rpart)
+
+### Random forest
+time.rf.train <- system.time(
+  fit.rf <- randomForest(y=training$classe, x=training[,-53],method = "rf", ntree = 50)
+)
+
+print(fit.rf)
+```
+
+##Fitting models
+
+The models can then be used on the validation set. The time it takes for the two models to make predictions is recorded. Then, the predictions are compared with the real classes: accuracy is defined as the proportion of predictions that matches the real classe, and is the opposite of an error rate.
+
+```{r}
+### Rpart
+time.rpart.validation <- system.time(
+  pred.rpart.validation <- predict(fit.rpart,validation, type = "class")
+)
+
+accuracy.rpart.validation <- sum(pred.rpart.validation == validation$classe)/length(pred.rpart.validation)
+
+### Random forest
+time.rf.validation <- system.time(
+  pred.rf.validation <- predict(fit.rf,validation)
+)
+ 
+accuracy.rf.validation <-sum(pred.rf.validation == validation$classe)/length(pred.rf.validation)
+```
+
+## Compairing of model performance
+
+The various performance information can be gathered to take an informed decision about the which model is better:
+
+```{r}
+results <- data.frame("Method" = c("Classification tree (rpart)","Random forest (randomForest)"),
+                      "Training time" = c(time.rpart.train[1], time.rf.train[1]),
+                      "Validation time" = c(time.rpart.validation[1], time.rf.validation[1]),
+                      "Accuracy" = 100*c(accuracy.rpart.validation,accuracy.rf.validation)
+)
+
+results[,2:4] <- round(results[,2:4],2)
+
+print(results)
+```
+
+Namely, we observe that the *rpart* method takes considerably less time to learn from the training data (`r time.rpart.train[1]` vs `r time.rf.train[1]` seconds) and to make predictions (`r time.rpart.validation[1]` vs `r time.rf.validation[1]` seconds). Though, in terms of accuracy, the *Random forest* method was found to be much precise (`r accuracy.rf.validation` vs `r accuracy.rpart.validation` ). Although speed is an important tradeoff, the random forest is retained for making predictions on the test sample.
+
+## Making predictions
+
+The following code uses the *Random forest* model developped to make predictions on the test dataset:
+
+```{r}
+pred.rf.test <- predict(fit.rf,test)
+
+print(pred.rf.test)
+```
+
+The following function *pm1_write_files* produces a text file for each of the predictions. This function is applied to the RandomForest predictions for submittal of the results.
+
+```{r}
+pml_write_files = function(x){
+  n = length(x)
+  for(i in 1:n){
+    filename = paste0("problem_id_",i,".txt")
+    write.table(x[i],file=filename,quote=FALSE,row.names=FALSE,col.names=FALSE)
+  }
+}
+
+pml_write_files(as.character(pred.rf.test))
+```
+
